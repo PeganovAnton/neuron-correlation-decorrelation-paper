@@ -127,3 +127,26 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Pycharm
+.idea/
+
+#########################################################
+# TEX
+#########################################################
+
+*.aux
+*.fdb_latexmk
+*.log
+*.zip
+*.bbl
+*.blg
+*.fls
+*.lof
+*.out
+*.toc
+*.lot
+*.snm
+*.synctex.gz
+*.dvi
+*.run.xml
