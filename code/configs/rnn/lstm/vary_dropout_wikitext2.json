@@ -1,11 +1,11 @@
 {
   "num_repeats": 10,
   "dataset_reader": {
-    "class": "dataset_readers.text8_reader.Text8Reader"
-  }
+    "class": "dataset_readers.text2_reader.Text2Reader",
+    "data_path": "text/wikitext-2"
+  },
   "dataset_iterator": {
-    "class": "dataset_iterators.text8_iterator.Text8Iterator",
-    "data_path": "text/text8.txt",
+    "class": "dataset_iterators.text2_iterator.Text2Iterator",
     "split": {"validation": 0.1, "train": 0.9}
   },
   "model": {
@@ -70,5 +70,12 @@
       }
     }
   },
-  "vars": {"ROOT": "~/corr-paper"}
+  "metadata": {
+    "vars": {
+      "ROOT": "~/corr-paper"
+    },
+    "download": {
+      "url": "https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-2-v1.zip"
+    }
+  }
 }
