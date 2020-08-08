@@ -61,7 +61,7 @@ def check_path_is_not_varied(config, path_key):
         return
     if not isinstance(config[path_key], dict):
         return
-    if "type" in config[path_key] and config[path_key] == "varied":
+    if "type" in config[path_key] and config[path_key]["type"] == "varied":
         raise ValueError(
             'Parameter "{path_key}" cannot be varied. There can be only one '
             'save path for a configuration path')
