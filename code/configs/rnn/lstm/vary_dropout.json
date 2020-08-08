@@ -2,11 +2,6 @@
   "num_repeats": 10,
   "dataset_reader": {
     "class": "dataset_readers.text8_reader.Text8Reader"
-  }
-  "dataset_iterator": {
-    "class": "dataset_iterators.text8_iterator.Text8Iterator",
-    "data_path": "text/text8.txt",
-    "split": {"validation": 0.1, "train": 0.9}
   },
   "model": {
     "class": "models.lstm.LSTM",
