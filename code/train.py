@@ -123,7 +123,7 @@ def set_save_paths(config):
         return
     if "result_save_path" not in config["train"]:
         config["train"]["result_save_path"] = \
-            root_path / Path("results") / config_rel_path
+            root_path / Path("results") / config_rel_path.with_suffix(".db")
     if "model_save_path" not in config["train"]:
         config["train"]["model_save_path"] = \
             root_path / Path("code/configs") / config_rel_path
@@ -347,9 +347,18 @@ def build_and_run_repeatedly(config, varied_params, config_idx):
         build_and_run_once(config, varied_params, config_idx, repeat_idx)
 
 
+def clear(config):
+    if "result_save_path" in config["train"]:
+        shutil.rmtree(config["train"]["result_save_path"])
+    if "model_save_path" in config["train"]:
+        shutil.rmtree(config["train"]["model_save_path"])
+
+
 def main():
     with open(args.config) as f:
         config = json.load(f)
+    if args.clear:
+        clear(config)
     set_save_paths(config)
     configs, param_values_by_config = expand_param_variations(config)
     for i, (varied_params, config) in enumerate(
