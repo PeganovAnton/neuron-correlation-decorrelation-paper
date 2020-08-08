@@ -3,6 +3,7 @@ import copy
 import importlib
 import json
 import shutil
+import sqlite3
 import sys
 import warnings
 from pathlib import Path
@@ -55,7 +56,20 @@ def find_varied_params(params, config, path):
                 find_varied_params(params, config, path + (k,))
 
 
+def check_path_is_not_varied(config, path_key):
+    if path_key not in config:
+        return
+    if not isinstance(config[path_key], dict):
+        return
+    if "type" in config[path_key] and config[path_key] == "varied":
+        raise ValueError(
+            'Parameter "{path_key}" cannot be varied. There can be only one '
+            'save path for a configuration path')
+
+
 def expand_param_variations(config):
+    check_path_is_not_varied(config["train"], "results_save_path")
+    check_path_is_not_varied(config["train"], "model_save_path")
     configs, param_values_by_config = [config], []
     varied_params = {}
     # fills `varied_params` dictionary

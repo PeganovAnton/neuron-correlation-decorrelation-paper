@@ -9,19 +9,19 @@
 \usepackage{url}
 
 
-\title{Formatting Instructions for ICLR 2021 \\ Conference Submissions}
+\title{Correlation and decorrelation in neural networks}
 
 % Authors must not appear in the submitted version. They should be hidden
 % as long as the \iclrfinalcopy macro remains commented out below.
 % Non-anonymous submissions will be rejected without review.
 
-\author{Antiquus S.~Hippocampus, Natalia Cerebro \& Amelie P. Amygdale \thanks{ Use footnote for providing further information
+\author{Anton Peganov, Mikhail Burtsev \thanks{ Use footnote for providing further information
 about author (webpage, alternative address)---\emph{not} for acknowledging
 funding agencies.  Funding acknowledgements go at the end of the paper.} \\
-Department of Computer Science\\
-Cranberry-Lemon University\\
-Pittsburgh, PA 15213, USA \\
-\texttt{\{hippo,brain,jen\}@cs.cranberry-lemon.edu} \\
+Neural Networks and Deep Learning Lab\\
+Moscow Institute of Physics and Technology\\
+Dolgopudny, Moscow region, Russian Federation \\
+\texttt{\{peganov\}@phystech.edu} \\
 \And
 Ji Q. Ren \& Yevgeny LeNet \\
 Department of Computational Neuroscience \\
@@ -52,13 +52,28 @@ Address \\
 
 \maketitle
 
+%\begin{abstract}
+%The abstract paragraph should be indented 1/2~inch (3~picas) on both left and
+%right-hand margins. Use 10~point type, with a vertical spacing of 11~points.
+%The word \textsc{Abstract} must be centered, in small caps, and in point size 12. Two
+%line spaces precede the abstract. The abstract must be limited to one
+%paragraph.
+%\end{abstract}
+
 \begin{abstract}
-The abstract paragraph should be indented 1/2~inch (3~picas) on both left and
-right-hand margins. Use 10~point type, with a vertical spacing of 11~points.
-The word \textsc{Abstract} must be centered, in small caps, and in point size 12. Two
-line spaces precede the abstract. The abstract must be limited to one
-paragraph.
+We discovered that in various deep networks architectures there is a growth of correlation of activations of neurons on the same hidden layer at an initial phase of a neural network training. The  correlation growth is followed with decorrelation of activations. This phenomenon is present in many neural networks architectures including perceptrons, convolutinal networks, and recurrent neural networks. We suppose that the correlation phase indicates that a model learns most simple features and decorrelation phase happens when neurons specialize. 
 \end{abstract}
+
+\section{Introduction}
+
+The more different neurons are from each other, the more commplex calculations the neural network can perform. On the other hand, duplication of neurons makes network more stable to units removal. For instance, dropout\citet{hinton2012dropout} was developed as a technic for increasing the duplication. So information about variablility of neurons may be useful for understanding machinary inside neural networks.
+
+We propose to measure correlation between neuronal activations  to estimate the variability in neurons. Our main finding is that in most architectures there is a growth of correlation between neurons on the initial phase of training followed by gradual decrease of correlation.
+
+
+\section{Related work}
+
+\citet{cogswell2015decov} introduced \texttt{DeCov} loss which explicitely penalizes norm of a covariance matrix commputed from vector of hidden activations. The authors showed that the proposed covariation penalty reduces overfitting. However, a survey of correlation between neurons was provided.
 
 \section{Submission of conference papers to ICLR 2021}
 
