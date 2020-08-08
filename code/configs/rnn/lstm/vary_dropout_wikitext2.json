@@ -44,8 +44,8 @@
         "batch_size": 100,
         "seq_len": 100
       },
-      "hooks": [
-        {
+      "hooks": {
+        "lstm0_correlation": {
           "target": "lstm0",
           "hook_function": "hooks.correlation",
           "kwargs": {
@@ -56,11 +56,11 @@
             ]
           }
         },
-        {
+        "lstm0_mean_squared": {
           "target": "lstm0",
           "hook_function": "hooks.mean_squared"
         }
-      ],
+      },
       "hooks_post_processing_fns": {
         "correlation": "hooks.average",
         "mean_squared": "hooks.average"

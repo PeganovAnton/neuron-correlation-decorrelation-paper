@@ -3,6 +3,7 @@ import copy
 import importlib
 import json
 import shutil
+import sqlite3
 import sys
 import warnings
 from pathlib import Path
@@ -55,7 +56,20 @@ def find_varied_params(params, config, path):
                 find_varied_params(params, config, path + (k,))
 
 
+def check_path_is_not_varied(config, path_key):
+    if path_key not in config:
+        return
+    if not isinstance(config[path_key], dict):
+        return
+    if "type" in config[path_key] and config[path_key]["type"] == "varied":
+        raise ValueError(
+            'Parameter "{path_key}" cannot be varied. There can be only one '
+            'save path for a configuration path')
+
+
 def expand_param_variations(config):
+    check_path_is_not_varied(config["train"], "results_save_path")
+    check_path_is_not_varied(config["train"], "model_save_path")
     configs, param_values_by_config = [config], []
     varied_params = {}
     # fills `varied_params` dictionary
@@ -109,7 +123,7 @@ def set_save_paths(config):
         return
     if "result_save_path" not in config["train"]:
         config["train"]["result_save_path"] = \
-            root_path / Path("results") / config_rel_path
+            root_path / Path("results") / config_rel_path.with_suffix(".db")
     if "model_save_path" not in config["train"]:
         config["train"]["model_save_path"] = \
             root_path / Path("code/configs") / config_rel_path
@@ -333,9 +347,18 @@ def build_and_run_repeatedly(config, varied_params, config_idx):
         build_and_run_once(config, varied_params, config_idx, repeat_idx)
 
 
+def clear(config):
+    if "result_save_path" in config["train"]:
+        shutil.rmtree(config["train"]["result_save_path"])
+    if "model_save_path" in config["train"]:
+        shutil.rmtree(config["train"]["model_save_path"])
+
+
 def main():
     with open(args.config) as f:
         config = json.load(f)
+    if args.clear:
+        clear(config)
     set_save_paths(config)
     configs, param_values_by_config = expand_param_variations(config)
     for i, (varied_params, config) in enumerate(

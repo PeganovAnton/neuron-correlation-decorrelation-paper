@@ -2,11 +2,6 @@
   "num_repeats": 10,
   "dataset_reader": {
     "class": "dataset_readers.text8_reader.Text8Reader"
-  }
-  "dataset_iterator": {
-    "class": "dataset_iterators.text8_iterator.Text8Iterator",
-    "data_path": "text/text8.txt",
-    "split": {"validation": 0.1, "train": 0.9}
   },
   "model": {
     "class": "models.lstm.LSTM",
@@ -47,8 +42,8 @@
         "batch_size": 100,
         "seq_len": 100
       },
-      "hooks": [
-        {
+      "hooks": {
+        "lstm0_correlation": {
           "target": "lstm0",
           "hook_function": "hooks.correlation",
           "kwargs": {
@@ -59,14 +54,14 @@
             ]
           }
         },
-        {
+        "lstm0_mean_squared": {
           "target": "lstm0",
           "hook_function": "hooks.mean_squared"
         }
       ],
       "hooks_post_processing_fns": {
-        "correlation": "hooks.average",
-        "mean_squared": "hooks.average"
+        "lstm0_correlation": "hooks.average",
+        "lstm0_mean_squared": "hooks.average"
       }
     }
   },
