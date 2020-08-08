@@ -2,10 +2,7 @@
   "num_repeats": 10,
   "dataset_reader": {
     "class": "dataset_readers.text2_reader.Text2Reader",
-    "data_path": "text/wikitext-2"
-  },
-  "dataset_iterator": {
-    "class": "dataset_iterators.text2_iterator.Text2Iterator",
+    "data_path": "text/wikitext-2",
     "split": {"validation": 0.1, "train": 0.9}
   },
   "model": {
