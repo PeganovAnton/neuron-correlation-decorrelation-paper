@@ -1,9 +1,10 @@
 {
   "num_repeats": 10,
   "dataset_reader": {
-    "class": "dataset_readers.text2_reader.Text2Reader",
-    "data_path": "text/wikitext-2",
-    "split": {"validation": 0.1, "train": 0.9}
+    "class": "torchtext.datasets.WikiText2",
+    "path": "text/wikitext-2",
+    "split": {"validation": 0.1, "train": 0.9},
+    "preprocessing": {}
   },
   "model": {
     "class": "models.lstm.LSTM",
@@ -72,7 +73,8 @@
       "ROOT": "~/corr-paper"
     },
     "download": {
-      "url": "https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-2-v1.zip"
+      "url": "https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-2-v1.zip",
+      "data_path": "text/wikitext-2"
     }
   }
 }
