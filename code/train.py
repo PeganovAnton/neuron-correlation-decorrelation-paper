@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import warnings
 from pathlib import Path
+from torch.utils.data import DataLoader
 
 import numpy as np
 
@@ -102,7 +103,7 @@ def expand_param_variations(config):
 
 
 def get_root_path(config) -> Path:
-    default_root_path = "~/corr-paper"
+    default_root_path = "~/neuron-correlation-decorrelation-paper"
     if "vars" in config:
         root_path = Path(config.get("vars").get("ROOT", default_root_path))
     else:
@@ -299,10 +300,18 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
     lr_impatience = 0
     best_stop_ce_loss = float('+inf')
     best_lr_ce_loss = float('+inf')
+    kwargs = copy.deepcopy(config["dataset_reader"])
+    reader_cls = import_object(kwargs["class"])
+    del kwargs["class"]
+    trainset = reader_cls(**kwargs)
+    trainloader = DataLoader(trainset, batch_size=config["train"]["batch_specs"]["batch_size"], shuffle=True, num_workers=2)
+    optimizer = optimizer_cls(model.parameters(), lr=lr)
+    if 
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.9)
+    else
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, )
 
-    for step, (inputs, labels) in enumerate(
-            iterator.gen_batches(
-                "train", config["batch_specs"], infinite=True)):
+    for step, (inputs, labels) in enumerate(trainloader, 0):
         if time_for_logarithmic_logging(step, config['log_factor']):
             v_metrics = test(
                 step, iterator, model, "valid", config)
@@ -314,9 +323,9 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
                     step, 'train', t_metrics, lr, model.last_run_hook_values)
                 log(step, 'train', t_metrics, lr)
         model.train()
+        optimizer.zero_grad()
         pred_probas = model(inputs)
         loss = loss_fn(pred_probas, labels)
-        optimizer = optimizer_cls(model.parameters(), lr=lr)
         loss.backward()
         optimizer.step()
 
