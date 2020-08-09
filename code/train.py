@@ -11,6 +11,13 @@ from pathlib import Path
 import numpy as np
 
 
+python_type_to_sql_type ={
+    int: 'INTEGER',
+    float: 'REAL',
+    str: 'TEXT'
+}
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "config",
@@ -354,6 +361,44 @@ def clear(config):
         shutil.rmtree(config["train"]["model_save_path"])
 
 
+def create_table(database_file_name, table_name, columns):
+    conn = sqlite3.connect(database_file_name)
+    cursor = conn.cursor()
+    command = (
+        f'CREATE TABLE {table_name} ('
+        + ', '.join(
+            [k + ' ' + python_type_to_sql_type[v] for k, v in columns.items()])
+        + ')'
+    )
+    try:
+        cursor.execute(command)
+    except sqlite3.OperationalError:
+        warnings.warn(f"The table {table_name} already exists")
+
+
+def initialize_databases(config, config_param_values):
+    valid_column_types = {
+        "config_idx": int,
+        "repeat_idx": int,
+    }
+    valid_column_types.update(
+        {m: float for m in config["train"]["metrics"].keys()})
+    valid_column_types.update(
+        {name: type(value) for name, value in config_param_values.items()})
+    valid_column_types["loss"] = float
+
+    train_column_types = copy.copy(valid_column_types)
+
+    valid_column_types.update(
+        {h: float for h in config["train"]["valid"]["hooks"].keys()})
+
+    create_table(
+        config["train"]["result_save_path"], 'valid', valid_column_types)
+
+    create_table(
+        config["train"]["result_save_path"], 'train', train_column_types)
+
+
 def main():
     with open(args.config) as f:
         config = json.load(f)
@@ -361,6 +406,7 @@ def main():
         clear(config)
     set_save_paths(config)
     configs, param_values_by_config = expand_param_variations(config)
+    initialize_databases(configs[0], param_values_by_config[0])
     for i, (varied_params, config) in enumerate(
             zip(param_values_by_config, configs)):
         with open(
