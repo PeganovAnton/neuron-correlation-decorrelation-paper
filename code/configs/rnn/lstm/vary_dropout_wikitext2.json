@@ -65,8 +65,8 @@
         }
       },
       "hooks_post_processing_fns": {
-        "correlation": "hooks.average",
-        "mean_squared": "hooks.average"
+        "lstm0_correlation": "hooks.average",
+        "lstm0_mean_squared": "hooks.average"
       }
     }
   },
