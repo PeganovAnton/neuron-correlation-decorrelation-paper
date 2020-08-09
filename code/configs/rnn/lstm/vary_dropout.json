@@ -37,6 +37,9 @@
     "stop_patience_period": 5000,
     "stop_patience": 20,
     "log_factor": 1.05,
+    "metrics": {
+      "accuracy": "metrics.accuracy"
+    },
     "valid": {
       "batch_specs": {
         "batch_size": 100,
