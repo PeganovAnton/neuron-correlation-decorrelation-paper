@@ -61,7 +61,7 @@
           "target": "lstm0",
           "hook_function": "hooks.mean_squared"
         }
-      ],
+      },
       "hooks_post_processing_fns": {
         "lstm0_correlation": "hooks.average",
         "lstm0_mean_squared": "hooks.average"
