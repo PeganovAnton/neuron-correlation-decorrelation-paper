@@ -184,16 +184,22 @@ def get_lr_decay_method(config):
     return method_of_lr_decay
 
 
-def update_lr(lr, step, valid_metrics, best_ce_loss, lr_impatience, config):
+def update_lr(
+        lr,
+        step,
+        valid_loss,
+        best_ce_loss,
+        lr_impatience,
+        config):
     method_of_lr_decay = get_lr_decay_method(config)
     if method_of_lr_decay == 'periodic':
         lr = config['lr_init'] \
              * config['lr_decay'] ** (step // config["lr_step"])
     elif method_of_lr_decay == 'impatience':
         if step % config['lr_patience_period'] == 0:
-            if valid_metrics['ce_loss'] < best_ce_loss:
+            if valid_loss < best_ce_loss:
                 lr_impatience = 0
-                best_ce_loss = valid_metrics['ce_loss']
+                best_ce_loss = valid_loss
             else:
                 lr_impatience += 1
                 if lr_impatience > config['lr_patience']:
@@ -252,7 +258,8 @@ def compute_metrics(pred_probas, labels, metric_specs):
 
 
 def save_metrics_hooks_varied(
-        data_type,
+        database_path,
+        table_name,
         config_idx,
         repeat_idx,
         step,
@@ -261,10 +268,23 @@ def save_metrics_hooks_varied(
         metric_values,
         hooks,
         varied_params,
-
 ):
-
-
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    col_names = cursor.fetchone()
+    print("(train.save_metrics_hooks_varied)col_names:", col_names)
+    data = {"config_idx": config_idx, "repeat_idx": repeat_idx, "step": step,
+            "learning_rate": learning_rate, "loss": loss}
+    data.update(metric_values)
+    data.update(hooks)
+    data.update(varied_params)
+    values = []
+    for col_name in col_names:
+        values.append(data[col_name])
+    cursor.execute(f'INSERT INTO {table_name} VALUES {tuple(values)}')
+    conn.commit()
+    conn.close()
 
 def append_step_metrics(accumulated_metrics, step_metrics):
     pass  # TODO
@@ -288,24 +308,24 @@ def test(
     loss_fn = loss_cls()
     model.eval()
     required_metrics = config.get("metrics", {})
-    accumulated_metrics = {'loss': []}
-    for k in required_metrics:
-        accumulated_metrics[k] = []
+    accumulated_metrics = {k: [] for k in required_metrics}
+    accumulated_loss = []
     for test_step, (inputs, labels) in enumerate(
             iterator.gen_batches(data_type, config[data_type]["batch_specs"])):
         pred_probas = model(inputs)
         step_metrics = compute_metrics(pred_probas, labels, required_metrics)
         accumulated_metrics = append_step_metrics(
             accumulated_metrics, step_metrics)
-        accumulated_metrics['loss'].append(loss_fn(pred_probas, labels))
+        accumulated_loss.append(loss_fn(pred_probas, labels))
 
     metrics = average_metrics(accumulated_metrics)
-    additional_measurements = post_process_hooks(
+    accumulated_loss = sum(accumulated_loss) / len(accumulated_loss)
+    hook_values = post_process_hooks(
         model, config['valid']['hooks_post_processing_fns'])
-    return metrics, additional_measurements
+    return metrics, accumulated_loss, hook_values
 
 
-def log(step, data_type, metric_values, lr):
+def log(step, data_type, loss, metric_values, lr):
     pass  # TODO
 
 
@@ -334,20 +354,23 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
 
     for step, (inputs, labels) in enumerate(trainloader, 0):
         if time_for_logarithmic_logging(step, config['log_factor']):
-            v_metrics = test(
-                step, iterator, model, "valid", config)
-            save_metrics_hooks_varied(step, 'valid', v_metrics, lr,
-                                      model.post_processed_accumulator_hooks)
-            log(step, 'valid', v_metrics, lr)
+            v_metrics, v_loss, v_hooks = test(
+                iterator, model, "valid", config)
+            save_metrics_hooks_varied(
+                config["train"]["result_save_path"], 'valid', config_idx,
+                repeat_idx, step, lr, v_loss, v_metrics, v_hooks, varied_params
+            )
+            log(step, 'valid', v_loss, v_metrics, lr)
             if step > 0:
                 save_metrics_hooks_varied(
-                    step, 'train', t_metrics, lr, model.last_run_hook_values)
-                log(step, 'train', t_metrics, lr)
+                    config["train"]["result_save_path"], 'train', config_idx,
+                    repeat_idx, step, lr, t_loss, t_metrics, {}, varied_params)
+                log(step, 'train', t_loss, t_metrics, lr)
         model.train()
         optimizer.zero_grad()
         pred_probas = model(inputs)
-        loss = loss_fn(pred_probas, labels)
-        loss.backward()
+        t_loss = loss_fn(pred_probas, labels)
+        t_loss.backward()
         optimizer.step()
 
         t_metrics = compute_metrics(
@@ -355,7 +378,7 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
         t_metrics['loss'] = loss
 
         lr, lr_impatience, best_lr_ce_loss = update_lr(
-            lr, step, v_metrics, best_lr_ce_loss, lr_impatience, config)
+            lr, step, v_loss, best_lr_ce_loss, lr_impatience, config)
 
         stop_training, stop_impatience, best_stop_ce_loss = \
             decide_if_training_is_finished(
@@ -449,9 +472,8 @@ def initialize_databases(config, config_param_values):
         {name: type(config_param_values[name]) for name in varied_param_names})
 
     train_column_types.update(
-        {
-            name: type(value) for name, value
-            in sorted(config_param_values.items())})
+        {name: type(value) for name, value
+         in sorted(config_param_values.items())})
 
     create_table(
         config["train"]["result_save_path"], 'valid', valid_column_types)
