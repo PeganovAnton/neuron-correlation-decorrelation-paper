@@ -85,5 +85,13 @@
       }
     }
   },
-  "vars": {"ROOT": "~/corr-paper"}
+   "metadata": {
+    "vars": {
+      "ROOT": "~/corr-paper"
+    },
+    "download": {
+      "url": "https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-2-v1.zip",
+      "data_path": "text/wikitext-2"
+    }
+  }
 }
