@@ -61,13 +61,19 @@ def find_varied_params(params, config, path):
     sub_dict = get_nested_dict_elem(config, path)
     if "type" in sub_dict and sub_dict["type"] == "varied":
         name = sub_dict["name"] if "name" in sub_dict else path[-1]
-        if name in params and "main" not in sub_dict:
-            raise ValueError(
-                f'There are 2 varied params with identical names "{name}"')
+        if "main" not in sub_dict:
+            is_main = True
+        else:
+            is_main = sub_dict["main"]
         if name not in params:
             params[name] = {}
-        if "name" not in sub_dict:
-            params[name] = {"main": path}
+        if is_main and "main" in params:
+            raise ValueError(
+                f'There are 2 varied params with identical names "{name}". '
+                f'You probably forgotten to provide `"main" = False` flag to '
+                f'one of them.')
+        if is_main:
+            params[name]["main"] = path
         params[name][path] = sub_dict["values"]
     else:
         for k, v in sub_dict.items():
@@ -158,6 +164,13 @@ def import_object(cls_descr):
     return getattr(module, elems[-1])
 
 
+def instantiate_object_from_config(config, args=()):
+    config = copy.deepcopy(config)
+    cls_ = import_object(config["class"])
+    del config["class"]
+    return cls_(*args, **config)
+
+
 def build_iterator(config):
     cls_ = import_object(config["class"])
     del config["class"]
@@ -168,44 +181,6 @@ def build_model(config):
     cls_ = import_object(config["class"])
     del config["class"]
     return cls_(**config)
-
-
-def get_lr_decay_method(config):
-    if 'lr_step' in config:
-        method_of_lr_decay = 'periodic'
-    elif 'lr_patience' in config and 'lr_patience_period' in config:
-        method_of_lr_decay = 'impatience'
-    else:
-        raise ValueError(
-            "Train config has to contain either parameter 'lr_step' or "
-            "parameters 'lr_patience' and 'lr_patience_period'.\n"
-            "train config={}".format(config)
-        )
-    return method_of_lr_decay
-
-
-def update_lr(
-        lr,
-        step,
-        valid_loss,
-        best_ce_loss,
-        lr_impatience,
-        config):
-    method_of_lr_decay = get_lr_decay_method(config)
-    if method_of_lr_decay == 'periodic':
-        lr = config['lr_init'] \
-             * config['lr_decay'] ** (step // config["lr_step"])
-    elif method_of_lr_decay == 'impatience':
-        if step % config['lr_patience_period'] == 0:
-            if valid_loss < best_ce_loss:
-                lr_impatience = 0
-                best_ce_loss = valid_loss
-            else:
-                lr_impatience += 1
-                if lr_impatience > config['lr_patience']:
-                    lr *= config['lr_decay']
-                    lr_impatience = 0
-    return lr, lr_impatience, best_ce_loss
 
 
 def get_training_interruption_method(config):
@@ -330,28 +305,16 @@ def log(step, data_type, loss, metric_values, lr):
 
 
 def train(config, iterator, model, varied_params, config_idx, repeat_idx):
-    optimizer_cls = import_object(config["train"]["optimizer_cls"])
-    loss_cls = import_object(config["train"]["loss_cls"])
-    loss_fn = loss_cls()
-
-    lr = config['lr_init']
+    optimizer = instantiate_object_from_config(
+        config["train"]["optimizer"], (model.parameters(),))
+    loss_fn = instantiate_object_from_config(config["train"]["loss"])
+    scheduler = instantiate_object_from_config(
+        config["train"]["optimizer"], (optimizer,))
 
     stop_impatience = 0
-    # `lr_impatience` is not used if 'lr_step' is in `config`.
-    lr_impatience = 0
     best_stop_ce_loss = float('+inf')
-    best_lr_ce_loss = float('+inf')
-    kwargs = copy.deepcopy(config["dataset_reader"])
-    reader_cls = import_object(kwargs["class"])
-    del kwargs["class"]
-    trainset = reader_cls(**kwargs)
+    trainset = instantiate_object_from_config(config["dataset_reader"])
     trainloader = DataLoader(trainset, batch_size=config["train"]["batch_specs"]["batch_size"], shuffle=True, num_workers=2)
-    optimizer = optimizer_cls(model.parameters(), lr=lr)
-    lr_method = get_lr_decay_method(config)
-    if lr_method == "periodic":
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.9)
-    elif lr_method == "impatience":
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, )
 
     for step, (inputs, labels) in enumerate(trainloader, 0):
         if time_for_logarithmic_logging(step, config['log_factor']):

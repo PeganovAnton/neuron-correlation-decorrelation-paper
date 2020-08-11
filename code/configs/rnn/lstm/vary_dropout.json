@@ -17,22 +17,27 @@
   "train": {
     "result_save_path": "~/corr-paper/results/rnn/lstm/vary_dropout",
     "model_save_path": "~/corr-paper/code/saved_models/rnn/lstm/vary_dropout",
-    "loss_cls": "torch.nn.NLLLoss",
-    "optimizer_cls": {
-      "type": "varied",
-      "values": [
-        "torch.optim.Adam",
-        "torch.optim.SGD"
-      ]
+    "loss": {"class": "torch.nn.NLLLoss"},
+    "optimizer": {
+      "class": {
+        "type": "varied",
+        "values": [
+          "torch.optim.Adam",
+          "torch.optim.SGD"
+        ],
+        "name": "optimizer"
+      }
     },
-    "lr_init": {
-      "type": "varied",
-      "values": [0.001, 0.1],
-      "name":  "optimizer"
+    "scheduler": {
+      "class": "torch.optim.lr_scheduler.ReduceLROnPlateau",
+      "factor": 0.5,
+      "base_lr": {
+        "type": "varied",
+        "values": [0.001, 0.1],
+        "name":  "optimizer",
+        "main": false
+      }
     },
-    "lr_decay": 0.5,
-    "lr_patience": 10,
-    "lr_patience_period": 5000,
     "batch_specs": {"batch_size": 50, "seq_len": 100},
     "stop_patience_period": 5000,
     "stop_patience": 20,
