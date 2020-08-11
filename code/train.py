@@ -299,9 +299,10 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
     trainset = reader_cls(**kwargs)
     trainloader = DataLoader(trainset, batch_size=config["train"]["batch_specs"]["batch_size"], shuffle=True, num_workers=2)
     optimizer = optimizer_cls(model.parameters(), lr=lr)
-    if 
+    lr_method = get_lr_decay_method(config)
+    if lr_method == "periodic":
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1, gamma=0.9)
-    else
+    elif lr_method == "impatience":
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, )
 
     for step, (inputs, labels) in enumerate(trainloader, 0):
