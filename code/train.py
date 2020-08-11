@@ -12,6 +12,24 @@ from torch.utils.data import DataLoader
 import numpy as np
 
 
+PYTHON_TYPE_TO_SQL_TYPE ={
+    int: 'INTEGER',
+    float: 'REAL',
+    str: 'TEXT'
+}
+
+
+COLUMN_ORDER_IN_DATABASE = [
+    "config_idx",
+    "repeat_idx",
+    "step",
+    "learning_rate",
+    "loss"
+]
+# These are followed by metrics in alphabetical order, hooks in alphabetical
+# order, and varied params in alphabetical order.
+
+
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "config",
@@ -166,16 +184,22 @@ def get_lr_decay_method(config):
     return method_of_lr_decay
 
 
-def update_lr(lr, step, valid_metrics, best_ce_loss, lr_impatience, config):
+def update_lr(
+        lr,
+        step,
+        valid_loss,
+        best_ce_loss,
+        lr_impatience,
+        config):
     method_of_lr_decay = get_lr_decay_method(config)
     if method_of_lr_decay == 'periodic':
         lr = config['lr_init'] \
              * config['lr_decay'] ** (step // config["lr_step"])
     elif method_of_lr_decay == 'impatience':
         if step % config['lr_patience_period'] == 0:
-            if valid_metrics['ce_loss'] < best_ce_loss:
+            if valid_loss < best_ce_loss:
                 lr_impatience = 0
-                best_ce_loss = valid_metrics['ce_loss']
+                best_ce_loss = valid_loss
             else:
                 lr_impatience += 1
                 if lr_impatience > config['lr_patience']:
@@ -233,10 +257,34 @@ def compute_metrics(pred_probas, labels, metric_specs):
     pass  # TODO
 
 
-def save_metrics_and_params(
-        step, data_type, metric_values, lr, additional_measurements):
-    pass  # TODO
-
+def save_metrics_hooks_varied(
+        database_path,
+        table_name,
+        config_idx,
+        repeat_idx,
+        step,
+        learning_rate,
+        loss,
+        metric_values,
+        hooks,
+        varied_params,
+):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    col_names = cursor.fetchone()
+    print("(train.save_metrics_hooks_varied)col_names:", col_names)
+    data = {"config_idx": config_idx, "repeat_idx": repeat_idx, "step": step,
+            "learning_rate": learning_rate, "loss": loss}
+    data.update(metric_values)
+    data.update(hooks)
+    data.update(varied_params)
+    values = []
+    for col_name in col_names:
+        values.append(data[col_name])
+    cursor.execute(f'INSERT INTO {table_name} VALUES {tuple(values)}')
+    conn.commit()
+    conn.close()
 
 def append_step_metrics(accumulated_metrics, step_metrics):
     pass  # TODO
@@ -260,24 +308,24 @@ def test(
     loss_fn = loss_cls()
     model.eval()
     required_metrics = config.get("metrics", {})
-    accumulated_metrics = {'loss': []}
-    for k in required_metrics:
-        accumulated_metrics[k] = []
+    accumulated_metrics = {k: [] for k in required_metrics}
+    accumulated_loss = []
     for test_step, (inputs, labels) in enumerate(
             iterator.gen_batches(data_type, config[data_type]["batch_specs"])):
         pred_probas = model(inputs)
         step_metrics = compute_metrics(pred_probas, labels, required_metrics)
         accumulated_metrics = append_step_metrics(
             accumulated_metrics, step_metrics)
-        accumulated_metrics['loss'].append(loss_fn(pred_probas, labels))
+        accumulated_loss.append(loss_fn(pred_probas, labels))
 
     metrics = average_metrics(accumulated_metrics)
-    additional_measurements = post_process_hooks(
+    accumulated_loss = sum(accumulated_loss) / len(accumulated_loss)
+    hook_values = post_process_hooks(
         model, config['valid']['hooks_post_processing_fns'])
-    return metrics, additional_measurements
+    return metrics, accumulated_loss, hook_values
 
 
-def log(step, data_type, metric_values, lr):
+def log(step, data_type, loss, metric_values, lr):
     pass  # TODO
 
 
@@ -307,20 +355,23 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
 
     for step, (inputs, labels) in enumerate(trainloader, 0):
         if time_for_logarithmic_logging(step, config['log_factor']):
-            v_metrics = test(
-                step, iterator, model, "valid", config)
-            save_metrics_and_params(step, 'valid', v_metrics, lr,
-                model.post_processed_accumulator_hooks)
-            log(step, 'valid', v_metrics, lr)
+            v_metrics, v_loss, v_hooks = test(
+                iterator, model, "valid", config)
+            save_metrics_hooks_varied(
+                config["train"]["result_save_path"], 'valid', config_idx,
+                repeat_idx, step, lr, v_loss, v_metrics, v_hooks, varied_params
+            )
+            log(step, 'valid', v_loss, v_metrics, lr)
             if step > 0:
-                save_metrics_and_params(
-                    step, 'train', t_metrics, lr, model.last_run_hook_values)
-                log(step, 'train', t_metrics, lr)
+                save_metrics_hooks_varied(
+                    config["train"]["result_save_path"], 'train', config_idx,
+                    repeat_idx, step, lr, t_loss, t_metrics, {}, varied_params)
+                log(step, 'train', t_loss, t_metrics, lr)
         model.train()
         optimizer.zero_grad()
         pred_probas = model(inputs)
-        loss = loss_fn(pred_probas, labels)
-        loss.backward()
+        t_loss = loss_fn(pred_probas, labels)
+        t_loss.backward()
         optimizer.step()
 
         t_metrics = compute_metrics(
@@ -328,7 +379,7 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
         t_metrics['loss'] = loss
 
         lr, lr_impatience, best_lr_ce_loss = update_lr(
-            lr, step, v_metrics, best_lr_ce_loss, lr_impatience, config)
+            lr, step, v_loss, best_lr_ce_loss, lr_impatience, config)
 
         stop_training, stop_impatience, best_stop_ce_loss = \
             decide_if_training_is_finished(
@@ -364,6 +415,74 @@ def clear(config):
         shutil.rmtree(config["train"]["model_save_path"])
 
 
+def create_table(database_file_name, table_name, columns):
+    conn = sqlite3.connect(database_file_name)
+    cursor = conn.cursor()
+    command = (
+        f'CREATE TABLE {table_name} ('
+        + ', '.join(
+            [k + ' ' + PYTHON_TYPE_TO_SQL_TYPE[v] for k, v in columns.items()])
+        + ')'
+    )
+    try:
+        cursor.execute(command)
+    except sqlite3.OperationalError:
+        warnings.warn(f"The table {table_name} already exists")
+
+
+def initialize_databases(config, config_param_values):
+    valid_column_types = {
+        "config_idx": int,
+        "repeat_idx": int,
+        "step": int,
+        "learning_rate": float,
+        "loss": float
+    }
+    basic_columns = list(valid_column_types.keys())
+
+    metric_names = sorted(config["train"]["metrics"].keys())
+    invalid_metric_names = list(
+        set(metric_names) & set(valid_column_types.keys()))
+    if invalid_metric_names:
+        raise ValueError(
+            f'Metric name cannot be one of {list(valid_column_types)}. '
+            f'Invalid metric names: {invalid_metric_names}')
+    valid_column_types.update({m: float for m in metric_names})
+
+    train_column_types = copy.copy(valid_column_types)
+
+    hook_names = sorted(config["train"]["valid"]["hooks"].keys())
+    invalid_hook_names = list(set(hook_names) & set(valid_column_types.keys()))
+    if invalid_hook_names:
+        raise ValueError(
+            f'Hook name cannot be equal to one of metrics or one of elements '
+            f'of {basic_columns}. Invalid hook names: {invalid_hook_names}'
+        )
+    valid_column_types.update({h: float for h in hook_names})
+
+    varied_param_names = sorted(config_param_values.keys())
+    invalid_varied_param_names = list(
+        set(varied_param_names) & valid_column_types.keys())
+    if invalid_varied_param_names:
+        raise ValueError(
+            f'Varied param name cannot be equal to one of elements of '
+            f'{basic_columns}, or to one of metric names, or one of hook '
+            f'names. Invalid varied param names: {invalid_varied_param_names}'
+        )
+    valid_column_types.update(
+        {name: type(config_param_values[name]) for name in varied_param_names})
+
+    train_column_types.update(
+        {name: type(value) for name, value
+         in sorted(config_param_values.items())})
+
+    create_table(
+        config["train"]["result_save_path"], 'valid', valid_column_types)
+
+    create_table(
+        config["train"]["result_save_path"], 'train', train_column_types)
+
+
 def main():
     with open(args.config) as f:
         config = json.load(f)
@@ -371,6 +490,7 @@ def main():
         clear(config)
     set_save_paths(config)
     configs, param_values_by_config = expand_param_variations(config)
+    initialize_databases(configs[0], param_values_by_config[0])
     for i, (varied_params, config) in enumerate(
             zip(param_values_by_config, configs)):
         with open(

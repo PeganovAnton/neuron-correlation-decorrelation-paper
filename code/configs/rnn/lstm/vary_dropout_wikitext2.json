@@ -40,6 +40,9 @@
     "stop_patience_period": 5000,
     "stop_patience": 20,
     "log_factor": 1.05,
+    "metrics": {
+      "accuracy": "metrics.accuracy"
+    },
     "valid": {
       "batch_specs": {
         "batch_size": 100,
@@ -63,8 +66,8 @@
         }
       },
       "hooks_post_processing_fns": {
-        "correlation": "hooks.average",
-        "mean_squared": "hooks.average"
+        "lstm0_correlation": "hooks.average",
+        "lstm0_mean_squared": "hooks.average"
       }
     }
   },
