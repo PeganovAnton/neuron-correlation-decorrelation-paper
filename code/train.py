@@ -67,13 +67,12 @@ def find_varied_params(params, config, path):
             is_main = sub_dict["main"]
         if name not in params:
             params[name] = {}
-        if is_main and "main" in params:
+        if is_main and "keys" in params:
             raise ValueError(
                 f'There are 2 varied params with identical names "{name}". '
                 f'You probably forgotten to provide `"main" = False` flag to '
                 f'one of them.')
         if is_main:
-            params[name]["main"] = path
             if "keys" in sub_dict:
                 params[name]["keys"] = sub_dict["keys"]
             else:
@@ -107,7 +106,6 @@ def expand_param_variations(config):
         paths_and_values = [
             (p, v) for p, v in varied_specs.items() if isinstance(p, tuple)]
         paths, values = zip(*paths_and_values)
-        main_path_idx = paths.index(varied_specs["main"])
         new_configs, new_param_values_by_config = [], []
         for c, c_p in zip(configs, param_values_by_config):
             for set_idx, one_values_set in enumerate(zip(values)):
