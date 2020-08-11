@@ -1,7 +1,21 @@
 {
   "num_repeats": 10,
   "dataset_reader": {
-    "class": "dataset_readers.text8_reader.Text8Reader"
+    "type": "varied",
+    "values": [
+      {
+        "class": "torchtext.datasets.WikiText2",
+        "path": "datasets/text/wikitext-2",
+        "split": {"validation": 0.1, "train": 0.9}
+      },
+      {
+        "class": "torchtext.datasets.WikiText2",
+        "path": "datasets/text/text8",
+        "split": {"validation": 0.1, "train": 0.9}
+      }
+    ],
+    "keys": ["WikiText2", "text8"],
+    "name": "dataset"
   },
   "model": {
     "class": "models.lstm.LSTM",
@@ -21,10 +35,8 @@
     "optimizer": {
       "class": {
         "type": "varied",
-        "values": [
-          "torch.optim.Adam",
-          "torch.optim.SGD"
-        ],
+        "values": ["torch.optim.Adam", "torch.optim.SGD"],
+        "keys": ["Adam", "SGD"],
         "name": "optimizer"
       }
     },

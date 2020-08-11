@@ -67,13 +67,16 @@ def find_varied_params(params, config, path):
             is_main = sub_dict["main"]
         if name not in params:
             params[name] = {}
-        if is_main and "main" in params:
+        if is_main and "keys" in params:
             raise ValueError(
                 f'There are 2 varied params with identical names "{name}". '
                 f'You probably forgotten to provide `"main" = False` flag to '
                 f'one of them.')
         if is_main:
-            params[name]["main"] = path
+            if "keys" in sub_dict:
+                params[name]["keys"] = sub_dict["keys"]
+            else:
+                params[name]["keys"] = sub_dict["values"]
         params[name][path] = sub_dict["values"]
     else:
         for k, v in sub_dict.items():
@@ -93,9 +96,9 @@ def check_path_is_not_varied(config, path_key):
 
 
 def expand_param_variations(config):
-    check_path_is_not_varied(config["train"], "results_save_path")
+    check_path_is_not_varied(config["train"], "result_save_path")
     check_path_is_not_varied(config["train"], "model_save_path")
-    configs, param_values_by_config = [config], []
+    configs, param_values_by_config = [config], [{}]
     varied_params = {}
     # fills `varied_params` dictionary
     find_varied_params(varied_params, config, path=())
@@ -103,13 +106,12 @@ def expand_param_variations(config):
         paths_and_values = [
             (p, v) for p, v in varied_specs.items() if isinstance(p, tuple)]
         paths, values = zip(*paths_and_values)
-        main_path_idx = paths.index(varied_specs["main"])
         new_configs, new_param_values_by_config = [], []
         for c, c_p in zip(configs, param_values_by_config):
             for set_idx, one_values_set in enumerate(zip(values)):
                 new_c = copy.deepcopy(c)
                 new_c_p = copy.deepcopy(c_p)
-                new_c_p[param_name] = one_values_set[main_path_idx]
+                new_c_p[param_name] = varied_specs["keys"][set_idx]
                 for i, v in one_values_set:
                     set_nested_dict_elem(new_c, paths[i], v)
                 new_configs.append(new_c)
