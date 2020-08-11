@@ -311,7 +311,7 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
         config["train"]["optimizer"], (model.parameters(),))
     loss_fn = instantiate_object_from_config(config["train"]["loss"])
     scheduler = instantiate_object_from_config(
-        config["train"]["optimizer"], (optimizer,))
+        config["train"]["scheduler"], (optimizer,))
 
     stop_impatience = 0
     best_stop_ce_loss = float('+inf')
@@ -338,13 +338,11 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
         t_loss = loss_fn(pred_probas, labels)
         t_loss.backward()
         optimizer.step()
+        scheduler.step()
 
         t_metrics = compute_metrics(
             pred_probas, labels, config.get("metrics", {}))
         t_metrics['loss'] = loss
-
-        lr, lr_impatience, best_lr_ce_loss = update_lr(
-            lr, step, v_loss, best_lr_ce_loss, lr_impatience, config)
 
         stop_training, stop_impatience, best_stop_ce_loss = \
             decide_if_training_is_finished(
