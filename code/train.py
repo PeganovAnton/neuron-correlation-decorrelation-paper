@@ -74,6 +74,10 @@ def find_varied_params(params, config, path):
                 f'one of them.')
         if is_main:
             params[name]["main"] = path
+            if "keys" in sub_dict:
+                params[name]["keys"] = sub_dict["keys"]
+            else:
+                params[name]["keys"] = sub_dict["values"]
         params[name][path] = sub_dict["values"]
     else:
         for k, v in sub_dict.items():
@@ -93,9 +97,9 @@ def check_path_is_not_varied(config, path_key):
 
 
 def expand_param_variations(config):
-    check_path_is_not_varied(config["train"], "results_save_path")
+    check_path_is_not_varied(config["train"], "result_save_path")
     check_path_is_not_varied(config["train"], "model_save_path")
-    configs, param_values_by_config = [config], []
+    configs, param_values_by_config = [config], [{}]
     varied_params = {}
     # fills `varied_params` dictionary
     find_varied_params(varied_params, config, path=())
@@ -109,7 +113,7 @@ def expand_param_variations(config):
             for set_idx, one_values_set in enumerate(zip(values)):
                 new_c = copy.deepcopy(c)
                 new_c_p = copy.deepcopy(c_p)
-                new_c_p[param_name] = one_values_set[main_path_idx]
+                new_c_p[param_name] = varied_specs["keys"][set_idx]
                 for i, v in one_values_set:
                     set_nested_dict_elem(new_c, paths[i], v)
                 new_configs.append(new_c)
