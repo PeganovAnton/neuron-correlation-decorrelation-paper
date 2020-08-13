@@ -173,12 +173,6 @@ def instantiate_object_from_config(config, args=()):
     return cls_(*args, **config)
 
 
-def build_iterator(config):
-    cls_ = import_object(config["class"])
-    del config["class"]
-    return cls_(**config)
-
-
 def build_model(config):
     cls_ = import_object(config["class"])
     del config["class"]
@@ -263,12 +257,17 @@ def save_metrics_hooks_varied(
     conn.commit()
     conn.close()
 
+
 def append_step_metrics(accumulated_metrics, step_metrics):
-    pass  # TODO
+    for k, v in step_metrics.items():
+        accumulated_metrics[k].append(v)
 
 
 def average_metrics(accumulated_metrics):
-    pass  # TODO
+    averaged = {}
+    for k, v in accumulated_metrics.items():
+        averaged[k] = sum(v) / len(v)
+    return averaged
 
 
 def post_process_hooks(model, hook_post_processing):
@@ -276,7 +275,7 @@ def post_process_hooks(model, hook_post_processing):
 
 
 def test(
-        iterator,
+        data_loader,
         model,
         data_type,
         config
@@ -287,8 +286,7 @@ def test(
     required_metrics = config.get("metrics", {})
     accumulated_metrics = {k: [] for k in required_metrics}
     accumulated_loss = []
-    for test_step, (inputs, labels) in enumerate(
-            iterator.gen_batches(data_type, config[data_type]["batch_specs"])):
+    for test_step, (inputs, labels) in enumerate(data_loader):
         pred_probas = model(inputs)
         step_metrics = compute_metrics(pred_probas, labels, required_metrics)
         accumulated_metrics = append_step_metrics(
@@ -298,15 +296,48 @@ def test(
     metrics = average_metrics(accumulated_metrics)
     accumulated_loss = sum(accumulated_loss) / len(accumulated_loss)
     hook_values = post_process_hooks(
-        model, config['valid']['hooks_post_processing_fns'])
+        model, config[data_type]["hooks_post_processing_fns"])
     return metrics, accumulated_loss, hook_values
 
 
 def log(step, data_type, loss, metric_values, lr):
+    print(f'step: {step}, "data": {data_type}, "loss": {loss}, '
+          f'"metrics": {metric_values}, "learning rate": {lr}')
+
+
+def get_data_loaders(config):
+    datasets = {}
+    if "vocab" in config:
+        ds_args = (instantiate_object_from_config(config["vocab"]),)
+    else:
+        ds_args = ()
+    if "train_dataset" in config:
+        datasets['train'] = instantiate_object_from_config(
+            config["train_dataset"], ds_args)
+    if "valie_dataset" in config:
+        datasets['valid'] = instantiate_object_from_config(
+            config["valid_dataset"], ds_args)
+    if "test_dataset" in config:
+        datasets['test'] = instantiate_object_from_config(
+            config["test_dataset"], ds_args)
+    data_loaders = {}
+    if "train_data_loader" in config:
+        data_loaders['train'] = instantiate_object_from_config(
+            config["train_data_loader"], (datasets['train'],))
+    if "valid_data_loader" in config:
+        data_loaders['valid'] = instantiate_object_from_config(
+            config["valid_data_loader"], (datasets['valid'],))
+    if "test_data_loader" in config:
+        data_loaders['test'] = instantiate_object_from_config(
+            config['test_data_loader'], (datasets['test'],))
+    return data_loaders
+
+
+def get_element_shape(config):
     pass  # TODO
 
 
-def train(config, iterator, model, varied_params, config_idx, repeat_idx):
+def train(config, data_loaders, model, varied_params, config_idx, repeat_idx):
     optimizer = instantiate_object_from_config(
         config["train"]["optimizer"], (model.parameters(),))
     loss_fn = instantiate_object_from_config(config["train"]["loss"])
@@ -314,19 +345,19 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
         config["train"]["scheduler"], (optimizer,))
 
     stop_impatience = 0
-    best_stop_ce_loss = float('+inf')
-    trainset = instantiate_object_from_config(config["dataset_reader"])
-    trainloader = DataLoader(trainset, batch_size=config["train"]["batch_specs"]["batch_size"], shuffle=True, num_workers=2)
 
-    for step, (inputs, labels) in enumerate(trainloader, 0):
-        if time_for_logarithmic_logging(step, config['log_factor']):
+    for step, (inputs, labels) in enumerate(data_loaders['train']):
+        if time_for_logarithmic_logging(step, config["log_factor"]):
+            lr = scheduler.state_dict()["param_groups"]["lr"]
             v_metrics, v_loss, v_hooks = test(
-                iterator, model, "valid", config)
+                data_loaders['valid'], model, "valid", config)
             save_metrics_hooks_varied(
                 config["train"]["result_save_path"], 'valid', config_idx,
-                repeat_idx, step, lr, v_loss, v_metrics, v_hooks, varied_params
+                repeat_idx, step, lr,
+                v_loss, v_metrics, v_hooks, varied_params
             )
-            log(step, 'valid', v_loss, v_metrics, lr)
+            log(step, 'valid', v_loss, v_metrics,
+                scheduler.state_dict()["param_groups"]["lr"])
             if step > 0:
                 save_metrics_hooks_varied(
                     config["train"]["result_save_path"], 'train', config_idx,
@@ -342,7 +373,6 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
 
         t_metrics = compute_metrics(
             pred_probas, labels, config.get("metrics", {}))
-        t_metrics['loss'] = loss
 
         stop_training, stop_impatience, best_stop_ce_loss = \
             decide_if_training_is_finished(
@@ -352,13 +382,15 @@ def train(config, iterator, model, varied_params, config_idx, repeat_idx):
 
 
 def build_and_run_once(config, varied_params, config_idx, repeat_idx):
-    iterator = build_iterator(copy.deepcopy(config["iterator"]))
+    data_loaders = get_data_loaders(config["data"])
+    element_shape = get_element_shape(config["data"])
+
     model_config = copy.deepcopy(config["model"])
-    model_config["element_shape"] = iterator.element_shape
-    model = build_model(model_config)
+    model_config["element_shape"] = element_shape
+    model = instantiate_object_from_config(model_config)
     train(
         config["train"],
-        iterator,
+        data_loaders,
         model,
         varied_params,
         config_idx,
