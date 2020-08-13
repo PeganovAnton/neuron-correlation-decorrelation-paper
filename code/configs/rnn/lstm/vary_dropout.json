@@ -36,7 +36,8 @@
         "values": [100000, 0],
         "name": "dataset"
       },
-      "bptt_len": 10
+      "bptt_len": 10,
+      "batch_size": 32
     },
     "valid_dataset": {
       "class": "CharLanguageModellingDataset",
@@ -49,16 +50,12 @@
         "name": "dataset"
       },
       "start_character": 0,
-      "bptt_len": 256
-    },
-    "train_data_loader": {
-      "class": "torch.utils.data.DataLoader",
-      "batch_size": 32
-    },
-    "valid_data_loader": {
-      "class": "torch.utils.data.DataLoader",
+      "dataset_len": 100000,
+      "bptt_len": 100,
       "batch_size": 256
-    }
+    },
+    "train_data_loader": {"class": "torch.utils.data.DataLoader"},
+    "valid_data_loader": {"class": "torch.utils.data.DataLoader"}
   },
   "model": {
     "class": "models.lstm.LSTM",

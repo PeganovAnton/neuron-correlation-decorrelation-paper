@@ -57,8 +57,24 @@ class LanguageModellingVocabulary:
     def __getitem__(self, key):
         if isinstance(key, int):
             return self.vocab[key]
-        else:
+        elif isinstance(key, str):
+            if key not in self.vocab:
+                key = '<UNK>'
             return self.vocab.index(key)
+        else:
+            raise TypeError("Only `int` and `str` keys are supported")
 
     def __len__(self):
         return len(self.vocab)
+
+    def text2indices(self, text):
+        a = []
+        for c in text:
+            a.append(self[c])
+        return a
+
+    def indices2text(self, indices):
+        text = ''
+        for i in indices:
+            text += self[i]
+        return text
