@@ -2,16 +2,18 @@ from collections import Counter
 from itertools import chain
 from pathlib import Path
 
+import numpy as np
 
-class LanguageModellingVocabulary:
+
+class CharLanguageModellingVocabulary:
     def __init__(
             self,
             save_path,
             text_paths,
-            max_num_characters,
+            max_num_characters=None,
             force_recollection=False
     ):
-        self.save_path = Path(save_path).expanduser()
+        self.save_path = Path(__file__).parent / Path(save_path).expanduser()
         self.text_paths = text_paths
         self.max_num_characters = max_num_characters
         self.vocab = None
@@ -34,11 +36,13 @@ class LanguageModellingVocabulary:
         for tf in text_files:
             tf.close()
         most_common, _ = zip(*counter.most_common(self.max_num_characters))
+        most_common = list(most_common)
         most_common.append('<UNK>')
         self.vocab = most_common
 
     def save_vocab(self):
-        with self.save_path.open() as f:
+        self.save_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.save_path.open('w') as f:
             for char in self.vocab:
                 if char == '<UNK>':
                     f.write(char + '\n')
@@ -48,8 +52,9 @@ class LanguageModellingVocabulary:
     def load_vocab(self):
         self.vocab = []
         with self.save_path.open() as f:
-            for line in self.vocab:
-                if line.strip() == '<UNK>':
+            for line in f:
+                line = line.strip()
+                if line == '<UNK>':
                     self.vocab.append(line)
                 else:
                     self.vocab.append(eval(line))
@@ -71,10 +76,11 @@ class LanguageModellingVocabulary:
         a = []
         for c in text:
             a.append(self[c])
-        return a
+        return np.array(a)
 
     def indices2text(self, indices):
         text = ''
         for i in indices:
             text += self[i]
         return text
+

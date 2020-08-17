@@ -150,3 +150,11 @@ dmypy.json
 *.synctex.gz
 *.dvi
 *.run.xml
+
+#########################################################
+# DIRECTORIES
+#########################################################
+
+cached_downloads/
+datasets/
+results/

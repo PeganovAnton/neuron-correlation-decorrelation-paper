@@ -2,7 +2,7 @@
   "num_repeats": 10,
   "data": {
     "vocab": {
-      "class": "vocabularies.CharLanguageModellingDataset",
+      "class": "vocabularies.CharLanguageModellingVocabulary",
       "save_path": {
         "type": "varied",
         "values": ["vocabs/text8.txt", "vocabs/wikitext-2.txt"],
@@ -11,11 +11,11 @@
       "text_paths": {
         "type": "varied",
         "values": [
-          ["datasets/text/text8.txt"],
+          ["{ROOT}/datasets/text/text8"],
           [
-            "datasets/text/wikitext-2/train.txt",
-            "datasets/text/wikitext-2/valid.txt",
-            "datasets/text/wikitext-2/test.txt"
+            "{ROOT}/datasets/text/wikitext-2/train.txt",
+            "{ROOT}/datasets/text/wikitext-2/valid.txt",
+            "{ROOT}/datasets/text/wikitext-2/test.txt"
           ]
         ],
         "name": "dataset"
@@ -26,42 +26,50 @@
       "path": {
         "type": "varied",
         "values": [
-          "datasets/text/text8.txt",
-          "datasets/text/wikitext-2/train.txt"],
+          "{ROOT}/datasets/text/text8",
+          "{ROOT}/datasets/text/wikitext-2/train.txt"],
         "name": "dataset",
         "keys": ["text8", "wikitext-2"]
       },
-      "start_character": {
+      "start_character_idx": {
         "type": "varied",
         "values": [100000, 0],
         "name": "dataset"
       },
       "bptt_len": 10,
-      "batch_size": 32
+      "batch_size": 32,
+      "loop": true
     },
     "valid_dataset": {
-      "class": "CharLanguageModellingDataset",
+      "class": "datasets.CharLanguageModellingDataset",
       "path": {
         "type": "varied",
         "values": [
-          "datasets/text/text8.txt",
-          "datasets/text/wikitext-2/valid.txt"
+          "{ROOT}/datasets/text/text8",
+          "{ROOT}/datasets/text/wikitext-2/valid.txt"
         ],
         "name": "dataset"
       },
-      "start_character": 0,
-      "dataset_len": 100000,
-      "bptt_len": 100,
-      "batch_size": 256
+      "start_character_idx": 0,
+      "number_of_characters_in_dataset": 10000,
+      "bptt_len": 10,
+      "batch_size": 32
     },
-    "train_data_loader": {"class": "torch.utils.data.DataLoader"},
-    "valid_data_loader": {"class": "torch.utils.data.DataLoader"}
+    "train_data_loader": {
+      "class": "torch.utils.data.DataLoader",
+      "batch_size": null
+    },
+    "valid_data_loader": {
+      "class": "torch.utils.data.DataLoader",
+      "batch_size": null
+    }
   },
   "model": {
     "class": "models.lstm.LSTM",
     "hidden_units": {
       "type":  "varied",
-      "values": [[100], [100, 100], [500], [500, 500]]
+      "values": [[100], [100, 100], [500], [500, 500]],
+      "keys": ["[100]", "[100, 100]", "[500]", "[500, 500]"]
     },
     "dropout": {
       "type": "varied",
@@ -69,8 +77,8 @@
     }
   },
   "train": {
-    "result_save_path": "~/corr-paper/results/rnn/lstm/vary_dropout",
-    "model_save_path": "~/corr-paper/code/saved_models/rnn/lstm/vary_dropout",
+    "result_save_path": "{ROOT}/results/rnn/lstm/vary_dropout.db",
+    "model_save_path": "{ROOT}/code/saved_models/rnn/lstm/vary_dropout",
     "loss": {"class": "torch.nn.NLLLoss"},
     "optimizer": {
       "class": {
@@ -78,17 +86,16 @@
         "values": ["torch.optim.Adam", "torch.optim.SGD"],
         "keys": ["Adam", "SGD"],
         "name": "optimizer"
+      },
+      "lr": {
+        "type": "varied",
+        "values": [0.001, 0.1],
+        "name":  "optimizer"
       }
     },
     "scheduler": {
       "class": "torch.optim.lr_scheduler.ReduceLROnPlateau",
-      "factor": 0.5,
-      "base_lr": {
-        "type": "varied",
-        "values": [0.001, 0.1],
-        "name":  "optimizer",
-        "main": false
-      }
+      "factor": 0.5
     },
 
     "stop_patience_period": 5000,
@@ -128,11 +135,11 @@
     "downloads": [
       {
         "url": "https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-2-v1.zip",
-        "data_path": "datasets/text/wikitext-2"
+        "data_path": "{ROOT}/datasets/text"
       },
       {
         "url": "http://mattmahoney.net/dc/text8.zip",
-        "data_path": "datasets/text"
+        "data_path": "{ROOT}/datasets/text"
       }
     ]
   }
