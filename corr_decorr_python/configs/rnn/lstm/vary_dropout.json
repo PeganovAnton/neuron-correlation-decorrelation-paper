@@ -97,7 +97,7 @@
       "class": "torch.optim.lr_scheduler.ReduceLROnPlateau",
       "factor": 0.5
     },
-    "valid_period": 2,
+    "valid_period": 3,
     "stop_patience": 20,
     "log_factor": 1.05,
     "metrics": {

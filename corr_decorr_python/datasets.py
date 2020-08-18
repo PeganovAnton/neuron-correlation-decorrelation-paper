@@ -37,6 +37,7 @@ class CharLanguageModellingDataset(IterableDataset):
         self.cursors = []
         self.segment_size = self.n_examples * self.bptt_len
         self._reset_cursors()
+        self.loaded_from_checkpoint = False
 
     def _reset_cursors(self):
         if self.cursors:
@@ -80,7 +81,7 @@ class CharLanguageModellingDataset(IterableDataset):
         if len(text) == self.bptt_len + 1:
             cur_pos = text_file.tell()
             if cur_pos != 0:
-                text_file.seek(cur_pos)
+                text_file.seek(cur_pos-1)
             else:
                 text_file.seek(0, 2)
                 text_file.seek(text_file.tell()-1)
@@ -120,7 +121,10 @@ class CharLanguageModellingDataset(IterableDataset):
         return self.n_examples
 
     def __iter__(self):
-        self._reset_cursors()
+        if self.loaded_from_checkpoint:
+            self.loaded_from_checkpoint = False
+        else:
+            self._reset_cursors()
         return self
 
     def __next__(self):
@@ -141,3 +145,12 @@ class CharLanguageModellingDataset(IterableDataset):
     def __del__(self):
         for c in self.cursors:
             c.close()
+
+    def state_dict(self):
+        return {'cursors': [c.tell() for c in self.cursors]}
+
+    def load_state_dict(self, sd):
+        for c, c_pos in zip(self.cursors, sd['cursors']):
+            c.seek(c_pos)
+        self.loaded_from_checkpoint = True
+

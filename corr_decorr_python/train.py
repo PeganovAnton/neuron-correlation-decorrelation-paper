@@ -503,21 +503,23 @@ class Checkpointer:
             model,
             optimizer,
             scheduler,
-            stopper
+            stopper,
+            train_dataset
     ):
         self.config_idx = config_idx
         self.repeat_idx = repeat_idx
         self.last_checkpoint_path = get_checkpoint_path(
             train_config["model_save_path"], self.config_idx, self.repeat_idx,
-            'name')
+            'last')
         self.best_checkpoint_path = get_checkpoint_path(
             train_config["model_save_path"], self.config_idx, self.repeat_idx,
-            'name')
+            'best')
         self.save_path = train_config["model_save_path"]
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.stopper = stopper
+        self.train_dataset = train_dataset
         self.best_valid_loss = float('inf')
 
     def update_checkpoints(self, step, epoch, valid_loss):
@@ -538,22 +540,28 @@ class Checkpointer:
         backup = {
             'step': step,
             'epoch': epoch,
-            'model_state_dict': self.model.parameters(),
+            'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'scheduler_state_dict': self.scheduler.state_dict(),
             'stopper_state_dict': self.stopper.state_dict(),
-            'checkpointer_state_dict': self.state_dict()
+            'checkpointer_state_dict': self.state_dict(),
         }
-        print(backup)
+        if hasattr(self.train_dataset, 'state_dict'):
+            backup['train_dataset_state_dict'] = \
+                self.train_dataset.state_dict()
+        # print(backup)
         torch.save(backup, path)
 
     def load_checkpoint(self, path):
         backup = torch.load(path)
-        self.model.load_state_dict(backup['model'])
+        self.model.load_state_dict(backup['model_state_dict'])
         self.optimizer.load_state_dict(backup['optimizer_state_dict'])
         self.scheduler.load_state_dict(backup['scheduler_state_dict'])
         self.stopper.load_state_dict(backup['stopper_state_dict'])
         self.load_state_dict(backup['checkpointer_state_dict'])
+        if hasattr(self.train_dataset, 'load_state_dict'):
+            self.train_dataset.load_state_dict(
+                backup['train_dataset_state_dict'])
         return backup['step'], backup['epoch']
 
     @staticmethod
@@ -591,28 +599,29 @@ def train(
     stopper = Stopper(train_config)
     checkpointer = Checkpointer(
         config_idx, repeat_idx, train_config, model, optimizer, scheduler,
-        stopper)
+        stopper, data_loaders['train'].dataset)
     if checkpointer.exists('last'):
         step, epoch = checkpointer.load_by_name('last')
     elif checkpointer.exists('best'):
         step, epoch = checkpointer.load_by_name('best')
     else:
-        step, epoch = 0, 0
-
+        step, epoch, loaded_from_checkpoint = 0, 0, False
     logger = Logger(
         train_config, config_idx, repeat_idx, optimizer, data_loaders['valid'],
         model, varied_params)
-
-    train_iterator = enumerate(data_loaders['train'])
-    t_loss, t_metrics = None, None
+    if step == 0:
+        logger.log_and_save_if_it_is_time(step, None, None)
+    train_iterator = iter(data_loaders['train'])
     while True:
         try:
-            step, samples = next(train_iterator)
+            inputs, labels = next(train_iterator)
         except StopIteration:
             epoch += 1
-            train_iterator = enumerate(data_loaders['train'])
-            step, samples = next(train_iterator)
-        inputs, labels = samples
+            train_iterator = iter(data_loaders['train'])
+            inputs, labels = next(train_iterator)
+        t_loss, _, t_metrics = train_step(
+            model, loss_fn, optimizer, inputs, labels, train_config)
+        step += 1
         logger.log_and_save_if_it_is_time(step, t_loss, t_metrics)
         if step % train_config["valid_period"] == 0:
             _, v_loss, _ = test(
@@ -622,9 +631,6 @@ def train(
             if stopper.step(step, epoch, v_loss):
                 break
 
-        t_loss, _, t_metrics = train_step(
-            model, loss_fn, optimizer, inputs, labels, train_config)
-
 
 def get_done_file_path(model_save_path):
     return Path(model_save_path).expanduser() / Path("done.json")
@@ -632,18 +638,34 @@ def get_done_file_path(model_save_path):
 
 def mark_repeat_as_done(config_idx, repeat_idx, model_save_path):
     done_file_path = get_done_file_path(model_save_path)
-    if done_file_path.is_file():
-        with done_file_path.open('+') as f:
+    done_file_path.parent.mkdir(parents=True, exist_ok=True)
+    with done_file_path.open('a+') as f:
+        f.seek(0)
+        try:
             done = json.load(f)
-            if str(config_idx) not in done:
-                done[str(config_idx)] = []
-            if repeat_idx in done[str(config_idx)]:
-                raise ValueError(
-                    f"Repeat {repeat_idx} of config {config_idx} is marked as "
-                    f"already made in file {done_file_path}.")
-            done[str(config_idx)].append(repeat_idx)
-            f.truncate(0)
-            json.dump(done, f)
+        except json.decoder.JSONDecodeError:
+            done = {}
+        if str(config_idx) not in done:
+            done[str(config_idx)] = []
+        if repeat_idx in done[str(config_idx)]:
+            raise ValueError(
+                f"Repeat {repeat_idx} of config {config_idx} is marked as "
+                f"already made in file {done_file_path}.")
+        done[str(config_idx)].append(repeat_idx)
+        f.truncate(0)
+        json.dump(done, f, indent=2)
+
+
+def remove_checkpoints_of_finished_repeat(
+        model_save_path, config_idx, repeat_idx):
+    get_checkpoint_path(
+        model_save_path, config_idx, repeat_idx, 'last').unlink()
+    best_path = get_checkpoint_path(
+        model_save_path, config_idx, repeat_idx, 'best')
+    best_path.unlink()
+    dir_ = best_path.parent
+    if not os.listdir(dir_):
+        remove(dir_)
 
 
 def build_and_run_once(config, varied_params, config_idx, repeat_idx):
@@ -661,10 +683,8 @@ def build_and_run_once(config, varied_params, config_idx, repeat_idx):
         config_idx,
         repeat_idx
     )
-    get_checkpoint_path(config["train"]["model_save_path"], config_idx,
-                        repeat_idx, 'last').unlink()
-    get_checkpoint_path(config["train"]["model_save_path"], config_idx,
-                        repeat_idx, 'best').unlink()
+    remove_checkpoints_of_finished_repeat(
+        config["train"]["model_save_path"], config_idx, repeat_idx)
     mark_repeat_as_done(
         config_idx, repeat_idx, config["train"]["model_save_path"])
 
@@ -702,6 +722,7 @@ def clear(config):
     if "model_save_path" in config["train"]:
         p = Path(config["train"]["model_save_path"]).expanduser()
         remove(p)
+
 
 def create_table(database_file_name, table_name, columns):
     database_file_name = Path(database_file_name).expanduser()
@@ -823,11 +844,11 @@ def main():
         for c in download_configs:
             download(c, get_vars(config))
         param_set_path = \
-            Path(config["train"]["model_save_path"]).expanduser().parent \
+            Path(config["train"]["model_save_path"]).expanduser() \
             / Path(f'param_sets/{i}.json')
         param_set_path.parent.mkdir(parents=True, exist_ok=True)
         with param_set_path.open('w') as f:
-            json.dump(varied_params, f)
+            json.dump(varied_params, f, indent=2)
         build_and_run_repeatedly(config, varied_params, i)
 
 
