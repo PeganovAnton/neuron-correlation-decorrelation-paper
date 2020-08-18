@@ -13,6 +13,8 @@ from urllib.request import urlretrieve
 from zipfile import ZipFile
 
 import numpy as np
+import torch
+from torch.optim import lr_scheduler
 
 
 PYTHON_TYPE_TO_SQL_TYPE = {
@@ -32,20 +34,21 @@ COLUMN_ORDER_IN_DATABASE = [
 # These are followed by metrics in alphabetical order, hooks in alphabetical
 # order, and varied params in alphabetical order.
 
-
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "config",
-    help="Path to experiment configuration file"
-)
-parser.add_argument(
-    "--clear",
-    "-c",
-    help="If provided remove all saved models and results "
-         "and redo experiment.",
-    action="store_true"
-)
-args = parser.parse_args()
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "config",
+        help="Path to experiment configuration file"
+    )
+    parser.add_argument(
+        "--clear",
+        "-c",
+        help="If provided remove all saved models and results "
+             "and redo experiment.",
+        action="store_true"
+    )
+    args = parser.parse_args()
+    return args
 
 
 def get_nested_dict_elem(d, path):
@@ -182,8 +185,7 @@ def set_save_paths(config):
             / config_rel_path.with_suffix(".db")
     if "model_save_path" not in config["train"]:
         config["train"]["model_save_path"] = \
-            Path(root_path) / Path("code/configs") \
-            / config_rel_path
+            Path(root_path) / Path("saved_models") / config_rel_path
 
 
 def import_object(obj_import_path):
@@ -209,41 +211,58 @@ def build_model(config):
     return cls_(**config)
 
 
-def get_training_interruption_method(config):
-    if 'num_steps' in config:
-        method_of_interrupting_training = 'fixed_num_steps'
-    elif 'stop_patience_period' in config and 'stop_patience' in config:
-        method_of_interrupting_training = 'impatience'
-    else:
-        raise ValueError(
-            "Train config has to contain either parameter 'fixed_num_steps'"
-            "or parameters 'stop_patience' and 'stop_patience_period'.\n"
-            "train config={}".format(config)
-        )
-    return method_of_interrupting_training
+class Stopper:
+    def __init__(self, train_config):
+        self.train_config = train_config
+        self.stop_patience = train_config.get("stop_patience")
+        self.num_steps = train_config.get("num_steps")
+        self.valid_period = train_config["valid_period"]
+        self.method_of_stopping = self.get_training_interruption_method()
 
+        self.best_v_loss = float('inf')
+        self.stop_impatience = 0
 
-def decide_if_training_is_finished(
-        step, v_loss, best_v_loss, stop_impatience, config):
-    method_of_interruption_of_training = get_training_interruption_method(
-        config)
-    if method_of_interruption_of_training == 'fixed_num_steps':
-        stop_training = step > config['num_steps']
-    elif method_of_interruption_of_training == 'impatience':
-        if step % config['stop_patience_period'] == 0:
-            if v_loss < best_v_loss:
-                stop_impatience = 0
-                best_v_loss = v_loss
-            else:
-                stop_impatience += 1
-        stop_training = stop_impatience > config['stop_patience']
-    else:
-        raise ValueError(
-            "Unsupported method of interrupting training '{}'".format(
-                method_of_interruption_of_training
+    def state_dict(self):
+        return {"best_v_loss": self.best_v_loss,
+                "stop_impatience": self.stop_impatience}
+
+    def load_state_dict(self, sd):
+        self.best_v_loss = sd['best_v_loss']
+        self.stop_impatience = sd['stop_impatience']
+
+    def get_training_interruption_method(self):
+        if 'num_steps' in self.train_config:
+            method_of_interrupting_training = 'fixed_num_steps'
+        elif "num_epochs" in self.train_config:
+            method_of_interrupting_training = 'fixed_num_epochs'
+        elif 'stop_patience' in self.train_config:
+            method_of_interrupting_training = 'impatience'
+        else:
+            raise ValueError(
+                "Train config has to contain either parameter 'num_steps', or "
+                "parameter 'num_epochs', or parameter 'stop_patience'.\n"
+                "train config={}".format(self.train_config)
             )
-        )
-    return stop_training, stop_impatience, best_v_loss
+        return method_of_interrupting_training
+
+    def step(self, step, epoch, v_loss):
+        if self.method_of_stopping == 'fixed_num_steps':
+            stop_training = step > self.num_steps
+        elif self.method_of_stopping == 'impatience':
+            if step % self.valid_period == 0:
+                if v_loss < self.best_v_loss:
+                    self.stop_impatience = 0
+                    self.best_v_loss = v_loss
+                else:
+                    self.stop_impatience += 1
+            stop_training = self.stop_impatience > self.stop_patience
+        else:
+            raise ValueError(
+                "Unsupported method of interrupting training '{}'".format(
+                    self.method_of_stopping
+                )
+            )
+        return stop_training
 
 
 def time_for_logarithmic_logging(step, factor):
@@ -339,9 +358,10 @@ def test(
     return metrics, accumulated_loss, hook_values
 
 
-def log(step, data_type, loss, metric_values, lr):
-    print(f'step: {step}, "data": {data_type}, "loss": {loss}, '
-          f'"metrics": {metric_values}, "learning rate": {lr}')
+def log(config_idx, repeat_idx, step, data_type, loss, metric_values, lr):
+    print(f'config: {config_idx}, repeat: {repeat_idx}, step: {step}, "data": '
+          f'{data_type}, "loss": {loss}, "metrics": {metric_values}, '
+          f'"learning rate": {lr}')
 
 
 def get_data_loaders(config):
@@ -391,6 +411,171 @@ def remove_first_dim(inputs, labels):
     return inputs, labels
 
 
+class Logger:
+    def __init__(
+            self,
+            train_config,
+            config_idx,
+            repeat_idx,
+            optimizer,
+            valid_data_loader,
+            model,
+            varied_params):
+        self.train_config = copy.deepcopy(train_config)
+        self.config_idx = config_idx
+        self.repeat_idx = repeat_idx
+        self.optimizer = optimizer
+        self.valid_data_loader = valid_data_loader
+        self.model = model
+        self.varied_params = copy.deepcopy(varied_params)
+        self.log_factor = self.train_config["log_factor"]
+        self.save_path = self.train_config["result_save_path"]
+
+    def log_and_save_if_it_is_time(self, step, train_loss, train_metrics):
+        if time_for_logarithmic_logging(step, self.log_factor):
+            if isinstance(train_loss, torch.Tensor):
+                train_loss = train_loss.detach().numpy()
+            lr = self.optimizer.state_dict()["param_groups"][0]["lr"]
+            v_metrics, v_loss, v_hooks = test(
+                self.valid_data_loader, self.model, "valid", self.train_config)
+            save_metrics_hooks_varied(
+                self.save_path, 'valid', self.config_idx,
+                self.repeat_idx, step, lr,
+                v_loss, v_metrics, v_hooks, self.varied_params
+            )
+            log(self.config_idx, self.repeat_idx, step, 'valid', v_loss,
+                v_metrics, lr)
+            if step > 0:
+                save_metrics_hooks_varied(
+                    self.save_path, 'train', self.config_idx,
+                    self.repeat_idx, step, lr, train_loss, train_metrics,
+                    {}, self.varied_params)
+                log(self.config_idx, self.repeat_idx, step, 'train',
+                    train_loss, train_metrics, lr)
+
+
+def train_step(model, loss_fn, optimizer, inputs, labels, train_config):
+    model.train()
+    optimizer.zero_grad()
+    pred_log_probas = model(inputs)
+    t_loss = loss_fn(
+        pred_log_probas.reshape((-1,) + pred_log_probas.shape[-1:]),
+        labels.reshape([-1])
+    )
+    t_loss.backward()
+    optimizer.step()
+    t_metrics = compute_metrics(
+        pred_log_probas, labels, train_config.get("metrics", {}))
+    return t_loss, pred_log_probas, t_metrics
+
+
+class Scheduler:
+    def __init__(self, scheduler_config, optimizer):
+        self.scheduler = instantiate_object_from_config(
+            scheduler_config, optimizer)
+
+    def step(self, valid_loss, epoch):
+        if type(self.scheduler) == lr_scheduler.CosineAnnealingWarmRestarts:
+            self.scheduler.step(epoch)
+        elif type(self.scheduler) == lr_scheduler.ReduceLROnPlateau:
+            self.scheduler.step(valid_loss)
+        else:
+            self.scheduler.step()
+
+    def state_dict(self):
+        return self.scheduler.save_dict()
+
+    def load_state_dict(self, sd):
+        self.scheduler.load_save_dict(sd)
+
+
+def get_checkpoint_path(model_save_path, config_idx, repeat_idx, name):
+    return Path(model_save_path).expanduser() / (str(config_idx)) \
+           / Path(name + str(repeat_idx) + '.pt')
+
+
+class Checkpointer:
+    def __init__(
+            self,
+            config_idx,
+            repeat_idx,
+            train_config,
+            model,
+            optimizer,
+            scheduler,
+            stopper
+    ):
+        self.config_idx = config_idx
+        self.repeat_idx = repeat_idx
+        self.last_checkpoint_path = get_checkpoint_path(
+            train_config["model_save_path"], self.config_idx, self.repeat_idx,
+            'name')
+        self.best_checkpoint_path = get_checkpoint_path(
+            train_config["model_save_path"], self.config_idx, self.repeat_idx,
+            'name')
+        self.save_path = train_config["model_save_path"]
+        self.model = model
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.stopper = stopper
+        self.best_valid_loss = float('inf')
+
+    def update_checkpoints(self, step, epoch, valid_loss):
+        self.create_checkpoint(self.last_checkpoint_path, step, epoch)
+        if valid_loss < self.best_valid_loss:
+            self.create_checkpoint(self.best_checkpoint_path, step, epoch)
+            self.best_valid_loss = valid_loss
+
+    def state_dict(self):
+        return {'best_valid_loss': self.best_valid_loss}
+
+    def load_state_dict(self, sd):
+        self.best_valid_loss = sd['best_valid_loss']
+
+    def create_checkpoint(self, path, step, epoch):
+        path = Path(path).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        backup = {
+            'step': step,
+            'epoch': epoch,
+            'model_state_dict': self.model.parameters(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
+            'stopper_state_dict': self.stopper.state_dict(),
+            'checkpointer_state_dict': self.state_dict()
+        }
+        print(backup)
+        torch.save(backup, path)
+
+    def load_checkpoint(self, path):
+        backup = torch.load(path)
+        self.model.load_state_dict(backup['model'])
+        self.optimizer.load_state_dict(backup['optimizer_state_dict'])
+        self.scheduler.load_state_dict(backup['scheduler_state_dict'])
+        self.stopper.load_state_dict(backup['stopper_state_dict'])
+        self.load_state_dict(backup['checkpointer_state_dict'])
+        return backup['step'], backup['epoch']
+
+    @staticmethod
+    def check_checkpoint_name(name):
+        if name not in ['best', 'last']:
+            raise ValueError(f'Unsupported checkpoint name "{name}"')
+
+    def load_by_name(self, name):
+        self.check_checkpoint_name(name)
+        if name == 'best':
+            return self.load_checkpoint(self.best_checkpoint_path)
+        elif name == 'last':
+            return self.load_checkpoint(self.last_checkpoint_path)
+
+    def exists(self, name):
+        self.check_checkpoint_name(name)
+        if name == 'best':
+            return self.best_checkpoint_path.is_file()
+        elif name == 'last':
+            return self.last_checkpoint_path.is_file()
+
+
 def train(
         train_config,
         data_loaders,
@@ -403,45 +588,62 @@ def train(
     loss_fn = instantiate_object_from_config(train_config["loss"])
     scheduler = instantiate_object_from_config(
         train_config["scheduler"], (optimizer,))
-    stop_impatience = 0
-    best_v_loss = float('inf')
-    for step, samples in enumerate(data_loaders['train']):
+    stopper = Stopper(train_config)
+    checkpointer = Checkpointer(
+        config_idx, repeat_idx, train_config, model, optimizer, scheduler,
+        stopper)
+    if checkpointer.exists('last'):
+        step, epoch = checkpointer.load_by_name('last')
+    elif checkpointer.exists('best'):
+        step, epoch = checkpointer.load_by_name('best')
+    else:
+        step, epoch = 0, 0
+
+    logger = Logger(
+        train_config, config_idx, repeat_idx, optimizer, data_loaders['valid'],
+        model, varied_params)
+
+    train_iterator = enumerate(data_loaders['train'])
+    t_loss, t_metrics = None, None
+    while True:
+        try:
+            step, samples = next(train_iterator)
+        except StopIteration:
+            epoch += 1
+            train_iterator = enumerate(data_loaders['train'])
+            step, samples = next(train_iterator)
         inputs, labels = samples
-        if time_for_logarithmic_logging(step, train_config["log_factor"]):
-            lr = optimizer.state_dict()["param_groups"][0]["lr"]
-            v_metrics, v_loss, v_hooks = test(
+        logger.log_and_save_if_it_is_time(step, t_loss, t_metrics)
+        if step % train_config["valid_period"] == 0:
+            _, v_loss, _ = test(
                 data_loaders['valid'], model, "valid", train_config)
-            save_metrics_hooks_varied(
-                train_config["result_save_path"], 'valid', config_idx,
-                repeat_idx, step, lr,
-                v_loss, v_metrics, v_hooks, varied_params
-            )
-            log(step, 'valid', v_loss, v_metrics, lr)
-            if step > 0:
-                save_metrics_hooks_varied(
-                    train_config["result_save_path"], 'train', config_idx,
-                    repeat_idx, step, lr, t_loss.detach().numpy(), t_metrics,
-                    {}, varied_params)
-                log(step, 'train', t_loss, t_metrics, lr)
-            scheduler.step(v_loss)
-        model.train()
-        optimizer.zero_grad()
-        pred_log_probas = model(inputs)
-        t_loss = loss_fn(
-            pred_log_probas.reshape((-1,) + pred_log_probas.shape[-1:]),
-            labels.reshape([-1])
-        )
-        t_loss.backward()
-        optimizer.step()
+            scheduler.step(v_loss, epoch)
+            checkpointer.update_checkpoints(step, epoch, v_loss)
+            if stopper.step(step, epoch, v_loss):
+                break
 
-        t_metrics = compute_metrics(
-            pred_log_probas, labels, train_config.get("metrics", {}))
+        t_loss, _, t_metrics = train_step(
+            model, loss_fn, optimizer, inputs, labels, train_config)
 
-        stop_training, stop_impatience, best_v_loss = \
-            decide_if_training_is_finished(
-                step, v_loss, best_v_loss, stop_impatience, train_config)
-        if stop_training:
-            break
+
+def get_done_file_path(model_save_path):
+    return Path(model_save_path).expanduser() / Path("done.json")
+
+
+def mark_repeat_as_done(config_idx, repeat_idx, model_save_path):
+    done_file_path = get_done_file_path(model_save_path)
+    if done_file_path.is_file():
+        with done_file_path.open('+') as f:
+            done = json.load(f)
+            if str(config_idx) not in done:
+                done[str(config_idx)] = []
+            if repeat_idx in done[str(config_idx)]:
+                raise ValueError(
+                    f"Repeat {repeat_idx} of config {config_idx} is marked as "
+                    f"already made in file {done_file_path}.")
+            done[str(config_idx)].append(repeat_idx)
+            f.truncate(0)
+            json.dump(done, f)
 
 
 def build_and_run_once(config, varied_params, config_idx, repeat_idx):
@@ -459,19 +661,47 @@ def build_and_run_once(config, varied_params, config_idx, repeat_idx):
         config_idx,
         repeat_idx
     )
+    get_checkpoint_path(config["train"]["model_save_path"], config_idx,
+                        repeat_idx, 'last').unlink()
+    get_checkpoint_path(config["train"]["model_save_path"], config_idx,
+                        repeat_idx, 'best').unlink()
+    mark_repeat_as_done(
+        config_idx, repeat_idx, config["train"]["model_save_path"])
+
+
+def get_remaining_repeats(config_idx, num_repeats, model_save_path):
+    done_file = get_done_file_path(model_save_path)
+    if done_file.is_file():
+        with done_file.open() as f:
+            done = json.load(f)
+    else:
+        done = {}
+    return set(range(num_repeats)) - set(done.get(str(config_idx), []))
 
 
 def build_and_run_repeatedly(config, varied_params, config_idx):
-    for repeat_idx in range(config["num_repeats"]):
+    for repeat_idx in get_remaining_repeats(
+            config_idx, config["num_repeats"],
+            config["train"]["model_save_path"]):
         build_and_run_once(config, varied_params, config_idx, repeat_idx)
+
+
+def remove(p):
+    if p.is_dir():
+        shutil.rmtree(p)
+    elif p.is_file():
+        p.unlink()
+    else:
+        raise OSError
 
 
 def clear(config):
     if "result_save_path" in config["train"]:
-        shutil.rmtree(config["train"]["result_save_path"])
+        p = Path(config["train"]["result_save_path"]).expanduser()
+        remove(p)
     if "model_save_path" in config["train"]:
-        shutil.rmtree(config["train"]["model_save_path"])
-
+        p = Path(config["train"]["model_save_path"]).expanduser()
+        remove(p)
 
 def create_table(database_file_name, table_name, columns):
     database_file_name = Path(database_file_name).expanduser()
@@ -577,15 +807,15 @@ def download(download_config, paths):
 
 
 def main():
+    args = get_args()
     with open(args.config) as f:
         config = json.load(f)
+    set_save_paths(config)
+    config_vars = get_vars(config)
+    expand_vars_in_config(config, config_vars)
     if args.clear:
         clear(config)
-    set_save_paths(config)
     configs, param_values_by_config = expand_param_variations(config)
-    config_vars = get_vars(config)
-    for c in configs:
-        expand_vars_in_config(c, config_vars)
     initialize_databases(configs[0], param_values_by_config[0])
     for i, (varied_params, config) in enumerate(
             zip(param_values_by_config, configs)):
@@ -593,7 +823,7 @@ def main():
         for c in download_configs:
             download(c, get_vars(config))
         param_set_path = \
-            Path(config["train"]["result_save_path"]).expanduser().parent \
+            Path(config["train"]["model_save_path"]).expanduser().parent \
             / Path(f'param_sets/{i}.json')
         param_set_path.parent.mkdir(parents=True, exist_ok=True)
         with param_set_path.open('w') as f:

@@ -78,7 +78,7 @@
   },
   "train": {
     "result_save_path": "{ROOT}/results/rnn/lstm/vary_dropout.db",
-    "model_save_path": "{ROOT}/code/saved_models/rnn/lstm/vary_dropout",
+    "model_save_path": "{ROOT}/saved_models/rnn/lstm/vary_dropout",
     "loss": {"class": "torch.nn.NLLLoss"},
     "optimizer": {
       "class": {
@@ -97,8 +97,7 @@
       "class": "torch.optim.lr_scheduler.ReduceLROnPlateau",
       "factor": 0.5
     },
-
-    "stop_patience_period": 5000,
+    "valid_period": 2,
     "stop_patience": 20,
     "log_factor": 1.05,
     "metrics": {
@@ -109,13 +108,7 @@
         "lstm0_correlation": {
           "target": "lstm0",
           "hook_function": "hooks.correlation",
-          "kwargs": {
-            "corr_axis": 2,
-            "reduced_axes": [
-              0,
-              1
-            ]
-          }
+          "kwargs": {"corr_axis": 2, "reduced_axes": [0, 1]}
         },
         "lstm0_mean_squared": {
           "target": "lstm0",
